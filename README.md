@@ -1,4 +1,4 @@
-# SuperPoint Rust
+# SuperPoint Rust [WIP]
 
 This repo is a personal project where I get familiar to
 Rust for deep learning applications by using
