@@ -1,44 +1,13 @@
-use std::ops::{Add, Mul};
-use std::time::Instant;
-use arrayfire::{DType, print};
-use candle_einops::einops;
-use candle_ext::candle::{IndexOp, Tensor, Result};
-use candle_ext::candle::nn::{Module, conv2d, Conv2d, Activation, Conv2dConfig, VarBuilder};
-use candle_ext::{TensorExt};
+use candle_ext::candle::{IndexOp, Result, Tensor};
 use candle_ext::candle::D::Minus1;
-use candle_ext::candle::DType::{F32, U32, U8};
+use candle_ext::candle::DType::F32;
+use candle_ext::candle::nn::{Activation, conv2d, Conv2d, Conv2dConfig, Module, VarBuilder};
 use candle_ext::candle::nn::ops::softmax;
+use candle_ext::TensorExt;
 
 fn logical_and(x: &Tensor, y: &Tensor) -> Result<Tensor> {
     return x.logical_not()?.logical_or(&y.logical_not()?);
 }
-
-
-fn simple_nms_2(scores: &Tensor, nms_radius: usize) -> Result<Tensor> {
-    fn max_pool(x: &Tensor, padding: usize) -> Result<Tensor> {
-        let kernel = padding * 2 + 1;
-        println!("x before {}", x);
-        let mut padded_x = x.unsqueeze(0)?;
-        padded_x = padded_x.max_pool2d_with_stride(kernel, 1)?;
-        padded_x = padded_x.squeeze(0)?;
-        padded_x = padded_x.pad_with_zeros(1, padding, padding)?.pad_with_zeros(2, padding, padding)?;
-        println!("padded after {}", padded_x);
-        println!("sum padded after {}", padded_x.sum_all()?);
-        return Ok(padded_x);
-    }
-
-    let zeros = scores.zeros_like()?;
-    let max_mask = scores.eq(&max_pool(&scores, nms_radius)?)?;
-    println!("max_mask {}", max_mask);
-    for _ in 0..2 {
-        let max_mask_f32 = max_mask.to_dtype(F32)?;
-        let supp_mask = max_pool(&max_mask_f32, nms_radius)?.gt(&zeros)?;
-        let supp_scores = scores.mul(&supp_mask.logical_not()?.to_dtype(F32)?)?;
-        let new_max_mask = supp_scores.eq(&max_pool(&supp_scores, nms_radius)?)?;
-    }
-    Ok(scores.clone())
-}
-
 
 fn simple_nms(scores: &Tensor, nms_radius: usize) -> Result<Tensor> {
     fn max_pool(x: &Tensor, padding: usize) -> Result<Tensor> {
@@ -85,7 +54,7 @@ fn non_zero_dims1(t: &Tensor) -> Result<Tensor> {
         }
     }
 
-    let non_zero_indices = Tensor::from_vec(indices, (num), &t.device())?;
+    let non_zero_indices = Tensor::from_vec(indices, num, &t.device())?;
     Ok(non_zero_indices)
 }
 
@@ -134,7 +103,6 @@ pub struct SuperPointConfig {
     max_keypoints: usize,
     nms_radius: usize,
     border_removal_distance: i32,
-    initializer_range: f32,
 }
 
 impl SuperPointConfig {
@@ -148,7 +116,6 @@ impl SuperPointConfig {
             max_keypoints: 512,
             nms_radius: 4,
             border_removal_distance: 4,
-            initializer_range: 0.02,
         }
     }
 }
@@ -206,10 +173,7 @@ pub struct SuperPointEncoder {
 
 impl SuperPointEncoder {
     pub fn new(p: VarBuilder, cfg: SuperPointConfig) -> Result<Self> {
-        let encoder_p = p.pp("encoder");
-        println!("{:?}", cfg.encoder_hidden_sizes);
-
-        let mut hidden_sizes = cfg.encoder_hidden_sizes;
+        let hidden_sizes = cfg.encoder_hidden_sizes;
 
         // if hidden_sizes.len() % 2 != 1 {
         //     Error::Msg("hidden_size does not contain an impair number of element".to_string())
@@ -320,7 +284,7 @@ impl SuperPointKeypointDecoder {
         Ok(scores)
     }
 
-    fn extract_keypoints(&self,mut scores: Tensor) -> Result<(Tensor, Tensor)> {
+    fn extract_keypoints(&self, mut scores: Tensor) -> Result<(Tensor, Tensor)> {
         scores = scores.i(0)?;
         let (height, width) = scores.dims2()?;
 
